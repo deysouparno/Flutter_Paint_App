@@ -1,8 +1,14 @@
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:screenshot/screenshot.dart';
+
+import 'package:flutter_paint_app/cubit/slider_cubit.dart';
 
 void main() {
   runApp(MyApp());
@@ -11,13 +17,19 @@ void main() {
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      darkTheme: ThemeData.dark(),
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<SliderCubit>(create: (context) => SliderCubit())
+      ],
+      child: MaterialApp(
+        title: 'Flutter Demo',
+        darkTheme: ThemeData.dark(),
+        theme: ThemeData(
+          primarySwatch: Colors.blue,
+        ),
+        debugShowCheckedModeBanner: false,
+        home: MyHomePage(title: 'Flutter Demo Home Page'),
       ),
-      home: MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
 }
@@ -33,8 +45,9 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   var strokeWidth = 5.0;
-  List<PaintBrush?> points = [];
+  List<Stroke> strokes = [];
   Color selectedColor = Colors.white;
+  Color backgroungColor = Colors.grey;
   ScreenshotController controller = ScreenshotController();
 
   void selectColor() {
@@ -61,6 +74,22 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       appBar: AppBar(
         title: Text("Paint App"),
+        actions: [
+          IconButton(
+            onPressed: () {},
+            icon: Icon(Icons.image),
+            tooltip: "Saved Images",
+          )
+        ],
+      ),
+      drawer: Drawer(
+        elevation: 5.0,
+        child: Column(
+          children: [
+            DrawerHeader(child: Icon(Icons.brush)),
+            Text("Saved Images")
+          ],
+        ),
       ),
       body: Column(
         mainAxisAlignment: MainAxisAlignment.start,
@@ -71,16 +100,46 @@ class _MyHomePageState extends State<MyHomePage> {
               child: Row(
                 children: [
                   IconButton(
+                      tooltip: "Background Color",
                       onPressed: () {
-                        setState(() {});
+                        showDialog(
+                            context: context,
+                            builder: (context) {
+                              return AlertDialog(
+                                title: Text("Choose color"),
+                                content: BlockPicker(
+                                  pickerColor: backgroungColor,
+                                  onColorChanged: (color) {
+                                    setState(() {
+                                      backgroungColor = color;
+                                    });
+                                    Navigator.of(context).pop();
+                                  },
+                                ),
+                              );
+                            });
+                      },
+                      icon: Icon(
+                        Icons.color_lens,
+                        color: backgroungColor,
+                      )),
+                  IconButton(
+                      tooltip: "Reverse",
+                      onPressed: () {
+                        setState(() {
+                          strokes.removeLast();
+                        });
                       },
                       icon: Icon(Icons.undo)),
                   IconButton(
+                      tooltip: "Save Image",
                       onPressed: () async {
                         final img = await controller.capture();
+                        await saveImage(img);
                       },
                       icon: Icon(Icons.save)),
                   IconButton(
+                      tooltip: "Brush Color",
                       onPressed: () {
                         selectColor();
                       },
@@ -89,21 +148,26 @@ class _MyHomePageState extends State<MyHomePage> {
                         color: selectedColor,
                       )),
                   Expanded(
-                    child: Slider(
-                        activeColor: selectedColor,
-                        value: strokeWidth,
-                        max: 20,
-                        min: 0,
-                        onChanged: (val) {
-                          setState(() {
-                            strokeWidth = val;
-                          });
-                        }),
+                    child: BlocBuilder<SliderCubit, SliderCubitState>(
+                      builder: (context, state) {
+                        return Slider(
+                            activeColor: selectedColor,
+                            value: state.strokeWidth,
+                            max: 20,
+                            min: 0,
+                            onChanged: (val) {
+                              strokeWidth = val;
+                              BlocProvider.of<SliderCubit>(context)
+                                  .emitSliderValue(val);
+                            });
+                      },
+                    ),
                   ),
                   IconButton(
+                      tooltip: "Clear Canvas",
                       onPressed: () {
                         setState(() {
-                          points.clear();
+                          strokes.clear();
                         });
                       },
                       icon: Icon(Icons.layers_clear)),
@@ -116,38 +180,35 @@ class _MyHomePageState extends State<MyHomePage> {
               onPanDown: (details) {
                 print("pandown called");
                 setState(() {
-                  points.add(PaintBrush(
-                      offset: details.localPosition,
-                      area: Paint()
+                  strokes.add(Stroke(
+                      brush: Paint()
                         ..strokeCap = StrokeCap.round
                         ..isAntiAlias = true
                         ..color = selectedColor
                         ..strokeWidth = strokeWidth));
+                  strokes.last.offsets.add(details.localPosition);
                 });
               },
               onPanUpdate: (details) {
                 print("pan update called");
                 setState(() {
-                  points.add(PaintBrush(
-                      offset: details.localPosition,
-                      area: Paint()
-                        ..strokeCap = StrokeCap.round
-                        ..isAntiAlias = true
-                        ..color = selectedColor
-                        ..strokeWidth = strokeWidth));
+                  strokes.last.offsets.add(details.localPosition);
                 });
               },
               onPanEnd: (details) {
                 print("pan end called");
-                setState(() {
-                  points.add(null);
-                });
+                // setState(() {
+                //   strokes.add(null);
+                // });
               },
-              child: CustomPaint(
-                painter: MyCustomPainer(points: points),
-                child: Container(
-                  width: MediaQuery.of(context).size.width,
-                  height: MediaQuery.of(context).size.height - 60,
+              child: ClipRRect(
+                child: CustomPaint(
+                  painter: MyCustomPainer(
+                      points: strokes, backgroundColor: backgroungColor),
+                  child: Container(
+                    width: MediaQuery.of(context).size.width,
+                    height: MediaQuery.of(context).size.height - 60,
+                  ),
                 ),
               ),
             ),
@@ -159,39 +220,56 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 class MyCustomPainer extends CustomPainter {
-  List<PaintBrush?> points;
+  List<Stroke> points;
+  Color backgroundColor;
 
-  MyCustomPainer({required this.points});
+  MyCustomPainer({
+    required this.points,
+    required this.backgroundColor,
+  });
   @override
   void paint(Canvas canvas, Size size) {
-    Paint background = Paint()..color = Colors.grey;
-    Rect rect = Rect.fromLTRB(0, 0, size.width, size.height);
+    Paint background = Paint()..color = this.backgroundColor;
+    Rect rect = Rect.fromLTRB(size.width, size.height, 0, 0);
     canvas.drawRect(rect, background);
 
-    for (int i = 0; i < points.length - 1; i++) {
-      if (shouldPaintLine(i)) {
-        canvas.drawLine(
-            points[i]!.offset, points[i + 1]!.offset, points[i]!.area);
-      } else if (shouldPaintPoint(i)) {
-        canvas.drawPoints(
-            PointMode.points, [points[i]!.offset], points[i]!.area);
+    points.forEach((element) {
+      if (element.offsets.length == 1) {
+        canvas.drawPoints(PointMode.points, element.offsets, element.brush);
+      } else {
+        for (int i = 0; i < element.offsets.length - 1; i++) {
+          canvas.drawLine(
+              element.offsets[i], element.offsets[i + 1], element.brush);
+        }
       }
-    }
+    });
   }
-
-  bool shouldPaintLine(int i) => points[i] != null && points[i + 1] != null;
-  bool shouldPaintPoint(int i) => points[i] != null && points[i + 1] == null;
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
-class PaintBrush {
-  Offset offset;
-  Paint area;
+class Stroke {
+  late List<Offset> offsets;
+  Paint brush;
 
-  PaintBrush({
-    required this.offset,
-    required this.area,
-  });
+  Stroke({
+    required this.brush,
+  }) {
+    this.offsets = [];
+  }
+}
+
+Future<String> saveImage(Uint8List? bytes) async {
+  if (bytes == null) {
+    return "Something wrong";
+  }
+  await Permission.storage.request();
+  final time = DateTime.now()
+      .toIso8601String()
+      .replaceAll(".", "_")
+      .replaceAll(":", "_");
+  final result =
+      await ImageGallerySaver.saveImage(bytes, name: "screenShot$time");
+  return result['filePath'];
 }
